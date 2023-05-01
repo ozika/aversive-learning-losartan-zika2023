@@ -1,4 +1,4 @@
-![Losartan](img/medicine.png)
+<img src ="img/medicine.png" width="100">
 
 
 # Description
