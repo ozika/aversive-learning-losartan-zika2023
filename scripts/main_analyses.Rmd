@@ -1,0 +1,1117 @@
+```{r setup, include=FALSE}
+options(warn=-1)
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load("renv", "here", "knitr")
+
+knitr::opts_chunk$set(echo = TRUE)
+
+here::i_am(".losartan_hidden_root")
+here::here()
+
+# renv::init()
+renv::activate(here::here(""))
+#renv::restore(project=here::here(""))
+#renv::snapshot()
+dir.create(here::here("output/figures/"))
+
+data_dir = here::here('data')
+utils_dir = here::here('utils' )
+
+adjustment_method ="holm"
+```
+
+## Load packages
+```{r}
+#library(devtools)
+#devtools::install_github("mattelisi/mlisi") 
+#devtools::install_github("mattelisi/bmsR")
+
+required_packages = c("reshape2", "sjmisc", "sjPlot", "purrr", "ggpubr", "corrplot", "dplyr","ggplot2", "ggsignif", "parameters", "extdplyr", "Jmisc", "PupillometryR",  "plyr", "lme4", "lmerTest", "emmeans", "tidyr", "ggpubr", "corrplot", "patchwork", "broom", "plotrix", "PupillometryR","glmmTMB", "Hmisc", "boot", "data.table", "devtools", "bmsR", "performance", "extdplyr")
+pacman::p_load(char = required_packages) 
+
+library(emmeans)
+
+
+source(here::here(utils_dir, 'r_functions.R'))
+pal <- get_colors("ond")
+emm_options(pbkrtest.limit = 5000)
+
+run_descriptives <- function(df, vec) {
+  sdf <- df[, append("drug_str", vec)]
+  for (i in as.character(vec)) {
+    tsdf = sdf %>%
+      group_by(drug_str) %>%
+      summarise_at(i, funs(mean,sd),na.rm = TRUE)
+    tsdf$varname <- i
+    print(tsdf)
+  }
+  pvals <- sdf %>%
+        summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$p.value), vars =  vec)
+  tscores <- sdf %>%
+        summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$statistic), vars =  vec)
+  dfs <- sdf %>%
+        summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$parameter), vars =  vec)
+  
+  stats <- rbind(pvals, tscores, dfs, vec)
+  stats <- data.table::transpose(stats)
+  colnames(stats) <- c("p", "t", "df", "variable")
+  
+  print(stats)
+}
+```
+
+# 1/ Descriptive and control analyses
+```{r}
+#prepare data for this entire section
+data<-read.csv(here::here(data_dir, "data_across_mods_pupiltype_amplitude.csv"))
+df<-data[which(data$visit_str %in% c("v2")),]
+#check! df[,c("group_raw", "drug_str")] gooD!
+df$sb <- paste0("sp", as.factor(df$sb_mdata))
+
+df$lang <- as.character(df$X1stlang)
+df$lang[!(df$lang %in% "engl")] <- "other"
+```
+
+```{r}
+vec <- c("heart_rate_base",   "heart_rate_peak")
+run_descriptives(df, vec)
+```
+## 1a/ Sociodemographic data (Table 1)
+- gender
+- first language english
+- age
+- NART
+- years of education
+
+```{r}
+
+#df$education <- as.numeric(df$education)
+sdf <- df[, c("drug_str", "Gender", "NART", "Age", "education", "lang" )]
+
+## Means
+for (i in as.character(c( "NART", "Age", "education"))) {
+  tsdf = sdf %>%
+    group_by(drug_str) %>%
+    summarise_at(i, funs(mean,sd),na.rm = TRUE)
+  print(tsdf)
+}
+
+# Frequencies/percentages
+tsdf = sdf %>%
+  group_by( drug_str, Gender) %>%
+  pct_routine(ret_name = "pct")
+print(tsdf)
+
+  tsdf = sdf %>%
+  group_by( drug_str, lang) %>%
+  pct_routine(ret_name = "pct")
+print(tsdf)
+  
+vec <- c("NART", "Age", "education")
+# T-tests on continuous variables
+pvals <- sdf %>%
+        summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$p.value), vars = vec)
+tscores <- sdf %>%
+        summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$statistic), vars =  vec)
+dfs <- sdf %>%
+      summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$parameter), vars =  vec)
+
+stats <- rbind(pvals, tscores, dfs, vec)
+stats <- data.table::transpose(stats)
+colnames(stats) <- c("p", "t", "df", "variable")
+
+print(stats)
+
+
+# Chi-squared test on freq
+sdf$drug_str <- as.character(sdf$drug_str)
+sdf$Gender <- as.character(sdf$Gender)
+sdf$lang <- as.character(sdf$lang)
+
+chisq <- chisq.test(table(sdf$drug_str, sdf$Gender))
+chisq
+
+chisq <- chisq.test(table(sdf$drug_str, sdf$lang))
+chisq
+
+```
+
+## 1b/ Clinical and Personality Measures (Table 1)
+- STAI-TAIT  
+- ASI
+- BDI 
+- EPQ (neuroticism)
+- Attentional control (ACS), subdivision to total, focusing and shifting
+
+```{r}
+vec <- c(  "STAIT",   "ASI",  "BDI",   "EPQ_N",  "ACS_total", "ACS_Focussing", "ACS_Shifting")
+run_descriptives(df, vec)
+
+```
+
+
+## 1c/ Drug effect on physiological and VAS measures (Table 2)
+(all before and at peak)
+- HR 
+- blood pressure sys
+- blood pressure dia 
+VAS scale:
+- anxious
+- tearful
+- hopeless
+- sad
+- depressed
+- sleepy 
+- nauseous
+- dizzy
+- heart racing 
+- alert
+
+```{r}
+
+## Heart rate
+vec <- c("heart_rate_base",   "heart_rate_peak")
+run_descriptives(df, vec)
+df$vas_T1_hr <- df$heart_rate_base
+df$vas_T2_hr <- df$heart_rate_peak
+
+
+## Blood pressure
+vec <- c("blood_pressure_base_syst",  "blood_pressure_base_diast", "blood_pressure2_syst", "blood_pressure2_diast")
+run_descriptives(df, vec)
+df$vas_T1_bpsys <- df$blood_pressure_base_syst 
+df$vas_T2_bpsys <- df$blood_pressure2_syst
+df$vas_T1_bpdia <- df$blood_pressure_base_diast
+df$vas_T2_bpdia <- df$blood_pressure2_diast
+
+
+## VAS measures
+vars<- c("anx", "tearful", "hopeless", "sad", "depr", "sleep", "nauseous","dizzy", "tachy", "alert", "flushed")
+for (t in  c("vas_T1_", "vas_T2_", "vas_T3_")) {
+  vec <- paste(t, vars, sep="")
+  sdf <- df[, append("drug_str", vec)]
+  for (i in as.character(paste(t, vars, sep=""))) {
+    tsdf = sdf %>%
+      group_by(drug_str) %>%
+      summarise_at(i, funs(mean,sd),na.rm = TRUE)
+    tsdf$varname <- i
+    print(tsdf)
+  }
+pvals <- sdf %>%
+      summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$p.value), vars =  vec)
+tscores <- sdf %>%
+        summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$statistic), vars =  vec)
+dfs <- sdf %>%
+      summarise_each(funs(t.test(.[drug_str == "losartan"], .[drug_str == "placebo"])$parameter), vars =  vec)
+
+stats <- rbind(pvals, tscores, dfs, vec)
+stats <- data.table::transpose(stats)
+colnames(stats) <- c("p", "t", "df", "variable")
+print(stats)
+
+}
+
+vars <- append(c("hr", "bpsys", "bpdia"), vars )
+### VAS measures F-tests!
+for (v in vars) {
+  vec <- paste(c("vas_T1_", "vas_T2_"), v, sep="")
+  ldf <- df[, append("drug_str", vec)]
+  ldf<-tidyr::pivot_longer(data=ldf, cols=vec, names_to="visit", values_to=v)
+  m<-lm(data=ldf, paste0(v, " ~ drug_str*visit"))
+  an <- anova(m)
+  print(an)
+}
+
+
+```
+
+### change in blood pressure before/after administration
+```{r}
+#df$vas_T1_bpsys <- df$blood_pressure_base_syst 
+#df$vas_T2_bpsys <- df$blood_pressure2_syst
+#df$vas_T1_bpdia <- df$blood_pressure_base_diast
+#df$vas_T2_bpdia <- df$blood_pressure2_diast
+df$id <- df$ids_Q
+
+phys_df = df
+
+df_sys <- df %>% 
+     reshape2::melt(id.vars = c("id", "drug_str"),  # variables to carry forward
+          measure.vars = c("vas_T1_bpsys", "vas_T2_bpsys"),  #variables to stack
+          value.name = "bpsys",     # name of the value variable 
+          variable.name = "time" ) # name of the variable    
+
+
+df_dia <- df %>% 
+     reshape2::melt(id.vars = c("id", "drug_str"),  # variables to carry forward
+          measure.vars = c("vas_T1_bpdia", "vas_T2_bpdia"),  #variables to stack
+          value.name = "bpdia",     # name of the value variable 
+          variable.name = "time" ) # name of the variable  
+
+df_sys2 <- df_sys %>%
+  group_by(time,drug_str) %>%
+  summarise_at(c("bpsys"), mean, na.rm = TRUE)
+df_sys2
+
+df_dia2 <- df_dia %>%
+  group_by(time, drug_str) %>%
+  summarise_at(c("bpdia"), mean, na.rm = TRUE)
+df_dia2
+
+
+
+m<- lm(data=df_sys, bpsys~time*drug_str)
+anova(m)
+
+m<- lm(data=df_dia, bpdia~time*drug_str)
+anova(m)
+
+
+
+```
+
+
+## 1d/ Data quality 
+shock magnitude (calibration)
+starting probability 
+difference between safe and harmful cue (present as control, only 20% of trials each) 
+
+```{r}
+## Task properties
+vec <- c(  "sh_int", "first_prob")
+run_descriptives(df, vec)
+
+sdf <- df[, c("drug_str", "sb")]
+sdf$sb <- as.character(sdf$sb)
+sdf <- sdf[sdf$drug_str %in% c("losartan", "placebo"),]
+chisq <- chisq.test(table(sdf$drug_str, sdf$sb)[c("losartan", "placebo"), c("sp25", "sp75")])
+#chisq <- chisq.test(sdf)
+chisq
+table(sdf$drug_str, sdf$sb)[c("losartan", "placebo"), c("sp25", "sp75")]/20
+
+```
+## /1e
+
+```{r}
+data<-read.csv(here::here(data_dir, "data_across_mods_pupiltype_amplitude.csv"))
+df<-data[which(data$visit_str %in% c("v2")),]
+
+table(df$demand_exp, df$drug_str)[c("losartan", "placebo"), c("losartan", "placebo")]
+16/40
+
+table(df$demand_pat, df$drug_str)[c("losartan", "placebo"), c("losartan", "placebo")]
+20/40
+
+chisq.test(table(df$demand_exp, df$drug_str)[c("losartan", "placebo"), c("losartan", "placebo")])
+chisq.test(table(df$demand_pat, df$drug_str)[c("losartan", "placebo"), c("losartan", "placebo")])
+
+
+```
+
+
+# 2/ Behavioural analyses
+## 2a-1/ Estmated switchpoint (for realigning the data)
+```{r}
+data<-read.csv(here::here(data_dir, "p3_est_switch_data.csv"))
+data<- data[data$visit %in% c(1,2, 3),]
+data["drug_str"] =  data["group"]
+data<-data[which(data$phase_str %in% c("acq","ext")),]
+fields <- c("visit", "phase_str", "drug_str", "outcome", "id", "sb")
+data2<- assign_var_types(data, fields)
+
+df = data2 %>%
+  group_by(id, drug_str, visit_str, sb, phase_str) %>%
+  summarise_at("switchpoint", mean, na.rm = TRUE)
+pal <- get_colors("ond")
+g <- ggplot(data = df, aes(y = switchpoint, x = visit_str, fill = drug_str)) +
+geom_flat_violin(position = position_nudge(x = .2, y = 0), alpha = .8, show.legend = FALSE, lwd=1.2) +
+geom_point(aes(y = switchpoint, colour=drug_str), position = position_jitter(width = .15), size = 1, alpha = 0.8, show.legend = FALSE) +
+geom_boxplot(width = .2, outlier.shape = NA, alpha = 0.7,lwd=1.2, show.legend = TRUE) +
+#geom_label(data = df2, aes(label = BIC, x = model, fill = drug_str, y = 100),  size=5) +
+expand_limits(x = 3) +
+scale_color_manual(values = c(pal[8], pal[10]), name = "group", labels = c("placebo", "losartan")) +
+scale_fill_manual(values = c(pal[8], pal[10]), name = "group", labels = c("placebo", "losartan")) +  
+theme_bw() +
+raincloud_theme 
+
+g
+
+m <- lmer(switchpoint ~ drug_str*visit_str*phase_str + (1|id)  + (1|sb) , data2) # without half
+anova(m)
+joint_tests(m, by = c("visit_str"))
+em <- emmeans(m, specs = pairwise ~ visit_str*drug_str, adjust=adjustment_method)
+em$emmeans
+em$contrasts
+
+mean(data2$switchpoint)
+sd(data2$switchpoint)
+
+```
+
+## 2a-3 Stable cues
+The difference on visit o
+```{r}
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+data<-data[which(data$Trial_Type %in% c(1,2) & (data$visit %in% c(2))),]# & (data$Reversal_ID %in% c(1,2,3,4,5,6))),]
+fields <- c("visit", "trtype_str", "drug", "outcome", "id")
+data$err <- data$err_true
+data<- assign_var_types(data, fields)
+df <- data %>%
+  group_by(id, drug_str,  trtype_str, sb) %>%
+  summarise_at(c("err", "prob"), mean, na.rm = TRUE)
+#emm_options(pbkrtest.limit = 7380)
+m <- lmer(prob ~   drug_str*trtype_str + (1|id) + (1|sb), data=df)
+anova(m)
+emmeans(m, pairwise ~ drug_str*trtype_str, adjust=adjustment_method)
+
+t.test(data=df[df$trtype_str %in% "low-prob",], prob ~ drug_str )
+t.test(data=df[df$trtype_str %in% "hi-prob",], prob ~ drug_str )
+
+# one-way t-tests against true reinforcement rates
+df2 <- df %>% 
+    group_by(drug_str,trtype_str) %>%
+    nest() %>% 
+    dplyr::mutate(tt=purrr::map(data,~t.test(.x$err))) %>%
+    dplyr::mutate(tidied = purrr::map(tt, tidy)) %>% 
+    unnest(tidied, .drop = T)
+
+
+
+df2$p.value.holm= p.adjust(df2$p.value, method = adjustment_method)
+df2$sig <- 0 
+df2$sig[df2$p.value.holm<0.05] <- 1
+print(df2[,c("drug_str", "trtype_str", "estimate",     "statistic", "parameter", "p.value.holm")])
+
+```
+
+
+## 2b/ Realigned behavioural data
+### 2b-1/ reversal-locked plot
+
+```{r fig.width=10, fig.height=4}
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+data<-data[which(data$Trial_Type %in% 3),]
+data<-data[which(data$trno_swchp %in% c(seq(-5, -1), seq(1,15))),]
+data<-data[which(data$rev_type_4plot_swchp %in% c("acq","ext")),]
+fields <- c("visit", "rev_type_4plot_swchp", "drug", "outcome", "id")
+df<- assign_var_types(data, fields)
+
+## This step is important for PLOTTING - it weights participants equally
+df = df %>%
+  group_by(trno_swchp, id, drug_str, visit_str, rev_type_4plot_swchp) %>%
+  summarise_at("prob", mean, na.rm = TRUE)
+
+df = df %>%
+  group_by(trno_swchp, drug_str, visit_str, rev_type_4plot_swchp) %>%
+  summarise_at("prob", funs(mean,std.error),na.rm = TRUE)
+df$lower = df$mean - df$std.error
+df$upper = df$mean + df$std.error
+
+pal <- get_colors("ond")
+g <- ggplot(data = df, aes(y = mean, x = trno_swchp, fill=interaction(rev_type_4plot_swchp, drug_str))) +
+  geom_vline(xintercept=0, linetype="dashed") +
+  geom_line(size=1.5, show.legend = TRUE) +
+  geom_ribbon(aes(ymin=lower, ymax=upper),  na.rm = TRUE,alpha=0.6,show.legend = TRUE) + 
+  scale_fill_manual(values = c(pal[2], pal[4], pal[1], pal[3]), name = "", labels = c("High Threat: Losartan", "Low Threat: Losartan", "High Threat: Placebo", "Low Threat: Placebo")) +
+   scale_color_manual(values = c(pal[2], pal[4], pal[1], pal[3])) + 
+  ylim(0,1) + 
+  scale_x_continuous(breaks = c(-5, -1, 1, 5, 10), limits=c(-5,10)) +
+  theme_bw() +
+  labs(y= "Rating", x="Trial (locked to estimated switchpoint)")  +
+  ggtitle("Participant data") + 
+  raincloud_theme   +
+  facet_grid(cols=vars(visit_str))
+g
+
+erdf <- df
+
+ggsave(here::here(figures_dir, "Fig2", "Figure2_raw.pdf"), width = 10, height = 5, dpi = 120)
+
+```
+
+
+### 2b-2/ Adjustment of probabilities (trials 5-15 after switch, baselin subtracted)
+
+```{r}
+
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+
+data<-data[which(data$Trial_Type %in% 3),]
+data<-data[which(data$trno_swchp %in% c(seq(-5, -1), seq(5,15))),]
+data<-data[which(data$rev_type_4plot_swchp %in% c("acq","ext")),]
+data <- data %>% mutate(prepost = 
+                    case_when(trno_swchp %in% seq(-3,-1) ~ "pre", 
+                              trno_swchp %in% seq(5, 15) ~ "post"), na.rm = TRUE)
+data<-data[which(data$prepost %in% c("pre","post")),]
+fields <- c("visit", "rev_type_4plot_swchp", "drug", "outcome", "id", "prepost", "sb")
+data<- assign_var_types(data, fields)
+
+### Get baseline for each reversal 
+dfbase <- data[data$prepost %in% "pre", c("prob", "prepost", "id", "rev_id_swchp", "drug_str", "visit_str", "rev_type_4plot_swchp", "sb")]
+dfbase = dfbase %>%
+  group_by(id, rev_id_swchp, drug_str, visit_str, rev_type_4plot_swchp, sb) %>%
+  summarise_at("prob", mean, na.rm = TRUE)
+dfbase$prob_baseline <- dfbase$prob
+dfbase <- dfbase[,c("id", "visit_str", "rev_id_swchp", "prob_baseline")]
+
+### Get summarized data and append base
+df <- data[, c("prob", "prepost", "id", "rev_id_swchp", "drug_str", "visit_str", "trno_swchp", "rev_type_4plot_swchp", "sb")]
+df = df[data$prepost %in% "post",]
+df <- base::merge(df, dfbase, by=c("id", "visit_str", "rev_id_swchp"))
+
+### Subtract baseline
+df$probchange <- df$prob - df$prob_baseline
+
+
+
+## Add approx true prob
+i <- 1
+lvls <- c(0.75, 0.25)
+for (ph in c("acq", "ext" )) {
+  df$truechange[df$rev_type_4plot_swchp %in% ph] <- lvls[i] - df$prob_baseline[df$rev_type_4plot_swchp %in% ph]
+  i <- i + 1
+}
+
+##### STATS ########################################################################
+
+m <- lmer(data=df, probchange ~ drug_str*visit_str*rev_type_4plot_swchp + (1|sb) + (1|id))
+anova(m)
+effectsize::effectsize(anova(m), type="eta", alternative="two.sided")
+
+df$model_pred <- predict(m) # for plotting
+
+## POST-HOCS
+#main eff phase
+em2<-emmeans(m, pairwise ~ rev_type_4plot_swchp, adjust=adjustment_method)
+em2
+
+em <- emmeans(m, ~ visit_str | drug_str/rev_type_4plot_swchp, adjust=adjustment_method)
+em
+pairs(em, adjust=adjustment_method)
+pairs(pairs(emmeans::regrid(em)), by = NULL)  
+
+# differnces on each visit 
+em <- emmeans(m, ~ drug_str | rev_type_4plot_swchp /visit_str) 
+pairs(em, adjust=adjustment_method)
+pairs(pairs(emmeans::regrid(em)), by = NULL)  
+
+#contrast of contrasts: is the (los-plac) difference between acq and ext significant?
+# (losartan - placebo acq v1) - (losartan - placebo ext v1)  -0.0444 0.0303  6.05  -1.465  0.6953
+# (losartan - placebo acq v2) - (losartan - placebo ext v2)  -0.1624 0.0208  3.02  -7.820  0.0202
+# (losartan - placebo acq v3) - (losartan - placebo ext v3)  -0.2080 0.0308  4.45  -6.746  0.0107
+
+#em <-  emmeans(m, pairwise ~ drug_str *rev_type_4plot_swchp * visit_str, adjust=adjustment_method)
+
+
+em <- emmeans(m, specs = ~ drug_str * visit_str * rev_type_4plot_swchp)
+em
+### add to paper
+lincombs <- contrast(em,
+               list(v2_v1_drug_acq=c(-1,0,1,0,0,0,0,0,0,0,0,0),
+                    v2_v1_drug_ext=c(0,0,0,0,0,0,-1,0,1,0,0,0),
+                    v2_v1_plac_acq=c(0,-1,0,1,0,0,0,0,0,0,0,0),
+                    v2_v1_plac_ext=c(0,0,0,0,0,0,0,-1,0,1,0,0),
+                    
+                    v3_v1_drug_acq=c(-1,0,0,0,1,0,0,0,0,0,0,0),
+                    v3_v1_drug_ext=c(0,0,0,0,0,0,-1,0,0,0,1,0),
+                    v3_v1_plac_acq=c(0,-1,0,0,0,1,0,0,0,0,0,0),
+                    v3_v1_plac_ext=c(0,0,0,0,0,0,0,-1,0,0,0,1)
+                    ), adjust=adjustment_method) # second one not changed
+concon <- contrast(lincombs, list(acq_drug_plac_v2v1=c(1,0,-1,0,0,0,0,0),
+                                  ext_drug_plac_v2v1=c(0,1,0,-1,0,0,0,0),
+                                  acq_drug_plac_v3v1=c(0,0,0,0,1,0,-1,0),
+                                  ext_drug_plac_v3v1=c(0,0,0,0,0,1,0,-1)), adjust=adjustment_method)
+print(summary(concon))
+
+```
+
+### Plot mean adjustment 
+
+```{r}
+
+## PLOT ################################
+dtrue = df %>%
+  group_by(rev_type_4plot_swchp) %>%
+  summarise_at("truechange", mean, na.rm = TRUE)
+
+dft = df %>%
+  group_by(id, drug_str, visit_str, rev_type_4plot_swchp, sb) %>%
+  summarise_at(c("probchange", "model_pred"), mean, na.rm = TRUE)
+
+dft$visit_str <- mapvalues(dft$visit_str,
+                            from = c("v1", "v2", "v3"),
+                            to =c("Baseline Session", "Drug Session", "Follow-up Session"))
+
+
+g <- ggplot(data = dft, aes(y = probchange, x = rev_type_4plot_swchp, fill=interaction(rev_type_4plot_swchp, drug_str))) +
+geom_hline(yintercept=c(0), linetype="dashed") +
+geom_point(aes(color= interaction(rev_type_4plot_swchp, drug_str)), position =   position_jitterdodge(  jitter.width = .15,  dodge.width = 0.5), size = 2, alpha = 0.5, show.legend=FALSE) + 
+geom_boxplot(inherit.aes = TRUE, width = .8, lwd=1.2, outlier.shape = NA, alpha = 1, show.legend=FALSE) + 
+  stat_summary(geom="point", fun="mean", size=4, shape=23, aes(y=model_pred, group=interaction(rev_type_4plot_swchp, drug_str)), color="black", 
+             position = position_dodge( 0.8), stroke=1.5, show.legend = FALSE) +
+  scale_fill_manual(values = c(pal[1], pal[2], pal[3], pal[4])) +
+   scale_color_manual(values = c(pal[1], pal[2], pal[3], pal[4])) + 
+expand_limits(x = 3) +
+theme_bw() +
+raincloud_theme +
+theme(legend.position = "right",
+      strip.text.x = element_text(size = 12,  face = "bold"),
+      strip.background = element_rect(color="black", fill="#ebebeb", size=0, linetype="solid")
+      ) + 
+labs(y= "Baseline-corrected probability ratings", x="Threat phase")  +
+scale_x_discrete(labels=c("acq" = "high", "ext" =  "low")) + 
+scale_y_continuous(breaks = c(-0.5,0,0.5)) +
+  
+facet_grid(cols=vars(visit_str)) 
+g
+ggsave(here::here(figures_dir, "Fig2", "Figure2b_raw.pdf"), width = 10, height = 5, dpi = 120)
+
+
+
+```
+
+#### Change low-to-high > high-to-low
+
+```{r}
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+
+data<-data[which(data$Trial_Type %in% 3),]
+data<-data[which(data$trno_swchp %in% c(seq(-5, -1), seq(5,15))),]
+data<-data[which(data$rev_type_4plot_swchp %in% c("acq","ext")),]
+data <- data %>% mutate(prepost = 
+                    case_when(trno_swchp %in% seq(-3,-1) ~ "pre", 
+                              trno_swchp %in% seq(5, 15) ~ "post"), na.rm = TRUE)
+data<-data[which(data$prepost %in% c("pre","post")),]
+fields <- c("visit", "rev_type_4plot_swchp", "drug", "outcome", "id", "prepost", "sb")
+data<- assign_var_types(data, fields)
+
+### Get baseline for each reversal 
+dfbase <- data[data$prepost %in% "pre", c("prob", "prepost", "id", "rev_id_swchp", "drug_str", "visit_str", "rev_type_4plot_swchp", "sb")]
+dfbase = dfbase %>%
+  group_by(id, rev_id_swchp, drug_str, visit_str, rev_type_4plot_swchp, sb) %>%
+  summarise_at("prob", mean, na.rm = TRUE)
+dfbase$prob_baseline <- dfbase$prob
+dfbase <- dfbase[,c("id", "visit_str", "rev_id_swchp", "prob_baseline")]
+
+### Get summarized data and append base
+df <- data[, c("prob", "prepost", "id", "rev_id_swchp", "drug_str", "visit_str", "trno_swchp", "rev_type_4plot_swchp", "sb")]
+df = df[data$prepost %in% "post",]
+df <- base::merge(df, dfbase, by=c("id", "visit_str", "rev_id_swchp"))
+
+### Subtract baseline
+# 
+df$probchange <- df$prob - df$prob_baseline
+# flip extinction for direct compariosn of acq and ext
+df$probchange[df$rev_type_4plot_swchp %in% "ext"] <- df$probchange[df$rev_type_4plot_swchp %in% "ext"] * (-1)
+
+m <- lmer(data=df, probchange ~ drug_str*visit_str*rev_type_4plot_swchp + (1|sb) + (1|rev_id_swchp/id))
+
+em <- emmeans(m, specs = ~ drug_str * visit_str * rev_type_4plot_swchp)
+em
+lincombs <- contrast(em,
+               list(v2_v1_drug_acq=c(-1,0,1,0,0,0,0,0,0,0,0,0),
+                    v2_v1_drug_ext=c(0,0,0,0,0,0,-1,0,1,0,0,0),
+                    v3_v1_drug_acq=c(-1,0,0,0,1,0,0,0,0,0,0,0),
+                    v3_v1_drug_ext=c(0,0,0,0,0,0,-1,0,0,0,1,0)), 
+               adjust=adjustment_method) # second one not changed
+concon <- contrast(lincombs, list(acq_ext_drug_v2=c(-1,1,0,0),
+                                  acq_ext_drug_v3=c(0,0,-1,1)), adjust=adjustment_method)
+print(summary(concon))
+```
+
+### 2b-3/ error from true rates in reversal cue 
+```{r fig.width=10, fig.height=4}
+
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+
+data<-data[which(data$Trial_Type %in% 3),]
+data<-data[which(data$trno_swchp %in% c(seq(5,15))),]
+data<-data[which(data$rev_type_4plot_swchp %in% c("acq","ext")),]
+data<-data[(data$visit %in% c(1,2,3)),]# & (data$Reversal_ID %in% c(1,2,3,4,5,6))),]
+fields <- c("visit", "rev_type_4plot_swchp", "drug", "outcome", "id")
+data$err <- data$err_true
+data<- assign_var_types(data, fields)
+df <- data %>%
+  group_by(id, sb, drug_str, visit_str, rev_type_4plot_swchp) %>%
+  summarise_at(c("err", "prob"), mean, na.rm = TRUE)
+errdata <- df
+
+# one-way t-tests against true reinforcement rates
+df2 <- df %>% 
+    group_by(visit_str,drug_str, rev_type_4plot_swchp) %>%
+    nest() %>% 
+    dplyr::mutate(tt=purrr::map(data,~t.test(.x$err))) %>%
+    dplyr::mutate(tidied = purrr::map(tt, tidy)) %>% 
+    unnest(tidied, .drop = T)
+
+
+
+df2$p.value.holm= p.adjust(df2$p.value, method = adjustment_method)
+df2$p.value.holm <- round(df2$p.value.holm,3)
+df2$p.value <- round(df2$p.value,3)
+df2$sig <- 0 
+df2$sig[df2$p.value.holm<0.05] <- 1
+df3 <- df2[,c("drug_str", "visit_str",  "rev_type_4plot_swchp", "estimate",  "statistic", "parameter", "p.value", "p.value.holm")]
+print(df3)
+
+g<-ggplot(data=df3, aes(x=visit_str, y=statistic, color=interaction(visit_str, drug_str))) + 
+  geom_point() + 
+  geom_text(
+    mapping = aes(label = paste0("p=", p.value.holm)), 
+    nudge_x = -0.3
+  ) + 
+  facet_grid(cols=vars(rev_type_4plot_swchp))
+g
+
+```
+
+
+# 3/ Modelling analyses 
+## 3a/ Model comparison 
+```{r fig.width=10, fig.height=4}
+
+# load and filter data
+data<-read.csv(here::here(data_dir, "p3_model_data_from_phase_1_to_end_full.csv"))
+data<-data[which(data$cue %in% c("reversal")),]
+fields <- c("visit", "drug_str", "cue", "model_str", "drug", "ids", "ta", "sb")
+df<- assign_var_types(data, fields)
+df$model_str <- mapvalues(df$model_str,
+                            from = c("PHnk5", "RW3", "RW3ph", "RW5ph"),
+                            #to =c("PH-5", "RW-outcome-3", "RW-phase-3", "RW-both-5"))
+                            to =c("Pearce-Hall model", "Outcome-sensitive model", "Phase-sensitive model", "Phase- and outcome-sensitive model"))
+pal <- get_colors("ond")
+
+
+# PRINT BICs before demeaning
+dftemp = df %>%
+  group_by(model_str ) %>%
+  summarise_at("BIC", mean, na.rm = TRUE)
+print(dftemp)
+
+
+dftemp = df %>%
+  group_by(ids, model_str, drug_str ) %>%
+  summarise_at("BIC", mean, na.rm = TRUE)
+
+m<-lmer(data=dftemp, BIC ~ model_str*drug_str + (1|ids))
+anova(m)
+
+
+
+# reduce data
+df = df %>%
+  group_by(ids, model_str, drug_str, visit_str_nicer ) %>%
+  summarise_at("BIC", mean, na.rm = TRUE)
+
+# for demeaning, mean by visit
+dem_df = df %>%
+  group_by(visit_str_nicer, drug_str) %>%
+  summarise_at(c("BIC"), mean, na.rm = TRUE)
+dem_df$BICmean <- dem_df$BIC
+dem_df$BIC <- NaN
+df<- merge(x = df, y = dem_df, by = c("visit_str_nicer", "drug_str"), all.x = TRUE)
+df$BIC_demean <- df$BIC.x - df$BICmean
+
+
+# load and filter data
+df_summ1 = df %>%
+  group_by( model_str) %>%
+  summarise_each(funs(mean,sd,se=sd(.)/sqrt(n())), BIC_demean)
+print(df_summ1)
+# Plot2
+g <- ggplot(df_summ1, aes(x=model_str, y=mean, fill=model_str)) + 
+          geom_bar(inherit.aes = TRUE, stat = "summary", fun.y = "mean", color="black", show.legend = TRUE, width=0.8, lwd=1) + 
+          scale_fill_manual(values = pal[c(15,16,17,18)], name = "Model") +
+          labs(y= "BIC (demeaned)", x="Model")  +
+          theme_bw() +
+          raincloud_theme  +
+          theme(axis.text.x=element_text(angle = -90, hjust = 0, vjust = 0.35)) + 
+          scale_x_discrete(label=c("","","", ""))
+g
+ggsave(here::here(figures_dir, "Fig3", "Figure3b_raw.pdf"), width = 7, height = 3, dpi = 120)
+
+```
+
+### Percentage of people best fitted by each model 
+```{r}
+data<-read.csv(here::here(data_dir, "p3_model_data_from_phase_1_to_end_full.csv"))
+data<-data[which(data$cue %in% c("reversal")),]
+fields <- c("visit", "drug_str", "cue", "model_str", "drug", "ids", "ta", "sb")
+df<- assign_var_types(data, fields)
+df$model_str <- mapvalues(df$model_str,
+                            from = c("PHnk5", "RW3", "RW3ph", "RW5ph"),
+                            #to =c("PH-5", "RW-outcome-3", "RW-phase-3", "RW-both-5"))
+                            to =c("Pearce-Hall model", "Outcome-sensitive model", "Phase-sensitive model", "Phase- and outcome-sensitive model"))
+df3 = df %>%
+  group_by( model_str, ids) %>%
+  summarise_at("BIC", mean, na.rm = TRUE)
+
+df3 <- df3 %>% tidyr::pivot_wider(id_cols=c("ids"), names_from=model_str, values_from = BIC)
+df3$best_model <- apply(df3[,2:5], 1, which.min)
+df3$best_model <- mapvalues(df3$best_model,
+                            from = c(1, 2, 3, 4),
+                            to =c("PH-5", "RW-outcome-3", "RW-phase-3", "RW-both-5"))
+
+counts = df3 %>% dplyr::count(best_model)
+counts$perc <- counts$n / sum(counts$n)
+print(counts)
+
+### exceedence probabilities
+# calculate relative akaike weights see Wagenmakers and Farell 2004
+mcdf <- exp(t(apply(df3[,2:5], 1, function(x){x-min(x)})) * (-1/2))
+mcdf <- round(t(apply(mcdf, 1, function(x){x/sum(x)})),3)
+
+bms0 <- VB_bms(as.matrix(mcdf)) #
+names(bms0)
+bms0<- as.data.frame(bms0)
+bms0$models <- c("PH-5", "RW-outcome-3", "RW-phase-3", "RW-both-5")
+bms0$models <- factor(bms0$models,levels = c("PH-5", "RW-outcome-3", "RW-phase-3", "RW-both-5"))
+
+print(bms0$pxp)
+
+g <- ggplot(data=bms0, aes(y=pxp, x=models)) +
+  geom_bar(stat = "summary", fun.y = "mean") +
+  theme_bw() +
+  raincloud_theme + 
+  labs(y= "Exceedence probability", x="")  
+g
+```
+
+## 3b/ Analysis of learning rates
+
+```{r}
+data<-read.csv(here::here(data_dir, "RW_3_norm_model_params.csv"))
+data<-data[which(data$cue %in% c(3)),]
+df<- reshape2::melt(data, id.var = c("visit_str", "drug_str", "ids", "sb"), measure.vars = c('alpha_sh', 'alpha_nosh'), variable.name="outcome", value.name = "alpha")
+df$visit <- mapvalues(df$visit_str,
+                         from = c("v1","v2","v3"),
+                         to = c(1,2,3))
+df$visit_str <- mapvalues(df$visit_str,
+                         from = c("v1","v2","v3"),
+                         to = c("Baseline", "Drug", "Follow-up"))
+
+df3 = df %>%
+  group_by( visit_str, drug_str) %>%
+  summarise_at("alpha", mean, na.rm = TRUE)
+df3
+
+df3 = df %>%
+  group_by( visit_str, drug_str) %>%
+  summarise_at("alpha", sd, na.rm = TRUE)
+df3
+```
+
+```{r}
+data<-read.csv(here::here(data_dir, "RW_3_norm_model_params.csv"))
+data<-data[which(data$cue %in% c(3)),]
+df<- reshape2::melt(data, id.var = c("visit_str", "drug_str", "ids", "sb"), measure.vars = c('alpha_sh', 'alpha_nosh'), variable.name="outcome", value.name = "alpha")
+df$visit <- mapvalues(df$visit_str,
+                         from = c("v1","v2","v3"),
+                         to = c(1,2,3))
+df$visit_str <- mapvalues(df$visit_str,
+                         from = c("v1","v2","v3"),
+                         to = c("Baseline", "Drug", "Follow-up"))
+
+fields <- c("visit_str", "drug_str", "outcome", "ids", "sb")
+df<- assign_var_types(df, fields)
+df$alpha[df$alpha==0] <- 0.0001
+
+pal <- get_colors("ond")
+
+### statistics ### 
+m <- lmer(alpha ~ drug_str*visit_str*outcome + (1|ids) + (1|sb) , data=df)
+gm <- glmmTMB(alpha ~ drug_str*visit_str*outcome + (1|ids) + (1|sb) , data=df, family = beta_family(link="logit"))
+car::Anova(gm)
+
+summary(gm)
+fixef(gm)
+
+```
+
+### 3b-1/ Drug*Visit 
+```{r}
+df$visit_str <- mapvalues(df$visit_str,
+                            from = c("v1", "v2", "v3"),
+                            to =c("Baseline", "Drug", "Follow-up"))
+df$outcome <- mapvalues(df$outcome,
+                            from = c("alpha_sh", "alpha_nosh"),
+                            to =c("Shock", "No-shock"))
+
+
+emgm<-summary(emmeans(gm, specs = pairwise ~ drug_str*visit_str, adjust=adjustment_method))
+emgm$emmeans$emmean <- inv.logit(emgm$emmeans$emmean)
+print(emgm$emmeans)
+#joint_tests(gm, by = c("drug_str"))
+
+
+gm2a_emm <- emmeans(gm, specs = ~ drug_str * visit_str)
+lincombs <- contrast(gm2a_emm,
+               list(v1_v2_los=c(1,0,-1,0,0,0), 
+                    v1_v3_los=c(1,0,0,0,-1,0),
+                    v2_v3_los=c(0,0,1,0,-1,0),
+                    v1_v2_plac=c(0,1,0,-1,0,0), 
+                    v1_v3_plac=c(0,1,0,0,0,-1),
+                    v2_v3_plac=c(0,0,0,1,0,-1),
+                    v1_drug=c(1,-1,0,0,0,0),
+                    v2_drug=c(0,0,1,-1,0,0),
+                    v3_drug=c(0,0,0,0,1,-1)
+                    )) # second one not changed
+emmeans::test(lincombs, adjust=adjustment_method)
+
+# add to paper
+### contrast of contrasts - is the decrease more significant in one than the other - yes!
+gm2a_emm <- emmeans(gm, specs = ~ drug_str * visit_str)
+lincombs <- contrast(gm2a_emm,
+               list(v2_v1_drug=c(-1,0,1,0,0,0),
+                    v3_v1_drug=c(-1,0,0,0,1,0),
+                    v2_v1_plac=c(0,-1,0,1,0,0),
+                    v3_v1_plac=c(0,-1,0,0,0,1)
+                    ), adjust=adjustment_method) # second one not changed
+concon <- contrast(lincombs, list(v2_v1_drug_plac=c(1,0,-1,0),
+                        v3_v1_drug_plac=c(0,1,0,-1)), adjust=adjustment_method)
+print(summary(concon))
+
+
+
+g <- ggplot(data = df, aes(y = alpha, x = visit_str, fill = drug_str)) +
+geom_point(aes(y = alpha, colour=drug_str), position =   position_jitterdodge(  jitter.width = .05,  dodge.width = 0.45), size = 1.3, alpha = 0.8, show.legend = FALSE) +
+geom_boxplot(width = .4, outlier.shape = NA, alpha = 0.7,lwd=1.2, show.legend = FALSE) +
+stat_summary(geom="line", fun="median", size=1.5, aes(group=drug_str, color=drug_str), alpha=0.5, show.legend = TRUE) +
+stat_summary(geom="point", fun="median", size=3, aes(group=drug_str, color=drug_str), show.legend = FALSE) +
+expand_limits(x = 3) +
+scale_color_manual(values = c(pal[1], pal[3]), name = "Group", labels = c("losartan", "placebo")) +
+scale_fill_manual(values = c(pal[1], pal[3]), name = "Group", labels = c("losartan", "placebo")) +  
+ylim(0, 0.53) +
+theme_bw() +
+raincloud_theme +
+labs(y= "Learning rate", x="Visit") 
+g
+
+ggsave(here::here(figures_dir, "Fig3", "Figure3_raw.pdf"), width = 6.2, height = 4, dpi = 120)
+
+
+```
+
+#### 3b-2 Learning rates by outcome
+```{r}
+g <- ggplot(data = df, aes(y = alpha, x = outcome, fill = outcome)) +
+geom_point(aes(y = alpha, colour=outcome), position =   position_jitterdodge(  jitter.width = .15,  dodge.width = 0.25), size = 1, alpha = 0.8, show.legend = FALSE) +
+geom_boxplot(width = .4, outlier.shape = NA, alpha = 0.7,lwd=1.2, show.legend = FALSE) +
+expand_limits(x = 3) +
+scale_color_manual(values = c("gray1", "gray59"), name = "Outcome", labels = c("Shock", "No-shock")) +
+scale_fill_manual(values = c("gray1", "gray59"), name = "Outcome", labels = c("Shock", "No-shock")) +
+ylim(0, 0.53) +
+theme_bw() +
+raincloud_theme +
+labs(y= "Learning rate", x="") 
+g
+ggsave(here::here(figures_dir, "Fig3", "Figure3c_raw.pdf"), width = 3, height = 4, dpi = 120)
+
+```
+
+## 3c/ Parameter recovery
+```{r}
+models <- c("PH", "RW3", "RW5", "RWph3") 
+
+#models <- c("PH") 
+for (m in models) {
+  df <- read.csv(here::here(data_dir, paste0("param_recovery_", m, ".csv")))
+  cdf <- cor(df, use="pairwise.complete.obs")
+  corrplot::corrplot(cdf, method='number')
+}
+
+```
+
+
+
+# 4/ Conjunnction analyses
+## 4a/ Linking alpha to behavioural ratings
+
+
+### 4a-1/ Linking behavioural and learning rates results, also check for RTs and blood pressure 
+
+```{r fi2, fix.width=10, fig.height=10}
+### behavioural 
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+data<-data[which(data$Trial_Type %in% 3),]
+data<-data[which(data$trno_swchp %in% c(seq(-3, -1), seq(5,15))),]
+data<-data[which(data$rev_type_4plot_swchp %in% c("acq","ext")),]
+data <- data %>% mutate(prepost = 
+                    case_when(trno_swchp %in% seq(-3,-1) ~ "pre", 
+                              trno_swchp %in% seq(5, 15) ~ "post"), na.rm = FALSE)
+data<-data[which(data$prepost %in% c("pre","post")),]
+fields <- c("visit", "rev_type_4plot_swchp", "drug", "outcome", "id", "prepost", "sb")
+df<- assign_var_types(data, fields)
+df = df %>%
+  group_by(prepost, id, drug_str, visit_str, visit, rev_type_4plot_swchp, sb) %>%
+  summarise_at("prob", mean, na.rm = TRUE)
+df$prepost = factor(df$prepost, levels=c("pre", "post"))
+df = df %>% spread(prepost, prob, fill = NA, convert = FALSE, drop = TRUE, sep = NULL)
+df["prepost"] =  df["post"]-df["pre"]
+
+dfv <- df[(df$visit==2 & df$rev_type_4plot_swchp %in% "acq"), c( "visit", "id", "sb", "drug_str")]
+for (v in c(1,2,3)) {
+  dfi <- df[df$visit==v, c("rev_type_4plot_swchp", "prepost", "visit", "id")]
+  
+  dfi$rev_type_4plot_swchp <- mapvalues(dfi$rev_type_4plot_swchp,
+                            from = c("acq", "ext"),
+                            to = c(paste0("prepost_acq_v", toString(v)), paste0("prepost_ext_v", toString(v))))
+  dfi = dfi %>% tidyr::spread(rev_type_4plot_swchp, prepost, fill = NA, convert = FALSE, drop = TRUE, sep = NULL)
+
+  dfv <- merge(dfv, dfi[,c("id", paste0("prepost_acq_v", toString(v)), paste0("prepost_ext_v", toString(v)))], by=c("id"), all.x=TRUE)
+}
+
+
+
+
+### learning rates
+dflr<-read.csv(here::here(data_dir,   "data_across_mods.csv"))
+dflr$id <- dflr$ids_mdata
+
+v1<-dflr[dflr$visit %in% c(1),c( "alpha_sh", "alpha_nosh", "id")]
+v1$alpha_sh_v1 <- v1$alpha_sh
+v1$alpha_nosh_v1 <- v1$alpha_nosh
+v1$alpha_diff_v1 <- v1$alpha_sh_v1 - v1$alpha_nosh_v1
+v1$alpha_v1 <- (v1$alpha_sh_v1 + v1$alpha_nosh_v1)/2
+
+v2<-dflr[dflr$visit %in% c(2),c( "alpha_sh", "alpha_nosh", "id")]
+v2$alpha_sh_v2 <- v2$alpha_sh
+v2$alpha_nosh_v2 <- v2$alpha_nosh
+v2$alpha_diff_v2 <- v2$alpha_sh_v2 - v2$alpha_nosh_v2
+v2$alpha_v2 <- (v2$alpha_sh_v2 + v2$alpha_nosh_v2)/2
+
+v3<-dflr[dflr$visit %in% c(3),c( "alpha_sh", "alpha_nosh", "id")]
+v3$alpha_sh_v3 <- v3$alpha_sh
+v3$alpha_nosh_v3 <- v3$alpha_nosh
+v3$alpha_diff_v3 <- v3$alpha_sh_v3 - v3$alpha_nosh_v3
+v3$alpha_v3 <- (v3$alpha_sh_v3 + v3$alpha_nosh_v3)/2
+
+dfl <- merge(v1, v2, by="id", all=TRUE)
+dfl <- merge(dfl,v3, by="id", all=TRUE)
+
+df <- merge(dfv, dfl)
+
+# add blood pressure data 
+df <- merge(df, phys_df[,c("id", "vas_T1_bpsys", "vas_T2_bpsys", "vas_T1_bpdia", "vas_T2_bpdia" )], by="id", all=TRUE)
+df$bpsys_diff <- df$vas_T2_bpsys - df$vas_T1_bpsys
+df$bpdia_diff <- df$vas_T2_bpdia - df$vas_T1_bpdia
+
+df$prepost_v2 <- (df$prepost_acq_v2 + (-1)*df$prepost_ext_v2)/2
+df$prepost_v3 <- (df$prepost_acq_v3 + (-1)*df$prepost_ext_v3)/2
+
+df$prepost_acq <- (df$prepost_acq_v1 + df$prepost_acq_v2 + df$prepost_acq_v3)/3
+df$prepost_ext <- (df$prepost_ext_v1 + df$prepost_ext_v2 + df$prepost_ext_v3)/3
+
+
+vars <- c( "alpha_sh", "alpha_nosh", "prepost_acq", "prepost_ext")
+for(i in colnames(df[,vars])){
+      df[is.na(df[,i]), i] <- median(df[,i], na.rm = TRUE)
+}
+
+metadf2 <- df
+```
+
+### check for blood pressure ovarall
+```{r}
+m <- lm(data=metadf2, prepost_v2 ~ drug_str*bpsys_diff)
+anova(m)
+
+m <- lm(data=metadf2, prepost_v3 ~ drug_str*bpdia_diff)
+anova(m) 
+
+m <- lm(data=metadf2, alpha_v2 ~ drug_str*bpdia_diff)
+anova(m)
+
+m <- lm(data=metadf2, alpha_v3 ~ drug_str*bpsys_diff)
+anova(m)
+
+
+
+```
+#### correlation of learning rates (model) and probability adjustment (behavioural data) overall
+
+```{r}
+
+cordf <- data.frame()
+vars <- c("alpha_sh", "alpha_nosh", "prepost_acq", "prepost_ext")
+corrplot(cor(df[,vars]), method = 'number')
+
+rc <- rcorr(as.matrix(df[, vars]), type = c("pearson"))
+print(rc$r)
+print(round(rc$P,4))
+
+
+for (al in c("alpha_sh", "alpha_nosh")) {
+  for (p in c("prepost_acq", "prepost_ext")) {
+    c <- cor.test(df[,al], df[,p], method="pearson")
+    cordf<-rbind(cordf,data.frame(varname=paste0(p, "_", al), r=c$estimate, t=c$statistic, df=c$parameter, pval=c$p.value))
+  }
+}
+
+
+cordf$pval.holm= round(p.adjust(cordf$pval, method = adjustment_method),3)
+  
+
+cordf
+
+
+
+
+```
+
+
+## 4b/ Linking dosage to alpha
+
+```{r}
+data<-read.csv(here::here(data_dir,  "data_across_mods_pupiltype_amplitude.csv"))
+df<-data[which(data$visit_str %in% c("v2")),]
+
+df$dosage <- 50/df$weight
+df$dosage[df$drug_str %in% "placebo"] <-0  
+df <- df[df$drug_str %in% "losartan", ]
+
+v1<-data[data$visit_str %in% c("v1"), c("ids_mdata", "alpha_sh", "alpha_nosh")]
+v1 <- v1 %>% dplyr::rename( alpha_sh_v1 = alpha_sh, alpha_nosh_v1 = alpha_nosh, ids = ids_mdata)
+v1$alpha_v1 <- (v1$alpha_sh_v1 + v1$alpha_nosh_v1)/2
+v2 <- df
+v2 <- v2 %>% dplyr::rename( alpha_sh_v2 = alpha_sh, alpha_nosh_v2 = alpha_nosh, ids = ids_mdata)
+v2$alpha_v2 <- (v2$alpha_sh_v2 + v2$alpha_nosh_v2)/2
+tdf <- base::merge(v1, v2, by="ids")
+tdf$alpha_sh_diff12 <- tdf$alpha_sh_v2 - tdf$alpha_sh_v1
+tdf$alpha_nosh_diff12 <- tdf$alpha_nosh_v2 - tdf$alpha_nosh_v1
+tdf$alpha_diff12 <- tdf$alpha_v2 - tdf$alpha_v1
+
+cdf <- cor(tdf[!is.na(tdf$dosage),c("dosage", "alpha_v2",  "alpha_sh_diff12", "alpha_nosh_diff12", "alpha_diff12")])
+corrplot::corrplot(cdf, method='number')
+
+
+m <- lm(data = tdf, alpha_v2 ~ dosage)
+anova(m)
+print(cor.test(tdf$dosage, tdf$alpha_v2), method="spearman")
+g <- ggplot(data=tdf, aes(x=dosage, y=alpha_v2)) +
+  geom_point() + 
+  labs(y= "dosage (mg/kg)", x="learning rate on visit 2")  + 
+  geom_smooth(method='lm', formula= y~x)
+g
+
+```
+
+
+### Response time
+
+```{r}
+data<-read.csv(here::here(data_dir,  "full_beh_dataset_p3.csv"))
+
+data<-data[which(data$Trial_Type %in% 3),]
+data<-data[which(data$trno %in% seq(1,15)),]
+data<-data[which(data$rev_type_4plot_onlypost %in% c("acq","ext")),]
+data <- data[data$RT>0 & data$RT <10,]
+df = data %>%
+  group_by(id, drug_str, visit_str, rev_type_4plot_swchp, sb) %>%
+  summarise_at("RT", mean, na.rm = TRUE)
+
+
+m <- glmer(data=data, RT ~ drug_str*visit_str+rev_type_4plot_swchp + (1 | id) + (1 | sb), family = Gamma(link = "log"))
+car::Anova(m)
+
+```
