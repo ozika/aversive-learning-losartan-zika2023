@@ -31,7 +31,7 @@ Operating systems: `Ubuntu 18.04.6 LTS`,  `macOS Catalina 10.15.7`, `macOS Monte
 R versions: `3.6.0 (2019-04-26)`, `4.0.0 (2020-04-24)`, `4.1.2 (2021-11-01)`
 
 **Expected runtime**
-- less than 2 minutes on a normal computer
+- about 10 minutes on a normal computer
 
 **Instructions**
 1. Glone git repo (this will create a folder with all scripts and data called `aversive-learning-losartan-zika2023`)
