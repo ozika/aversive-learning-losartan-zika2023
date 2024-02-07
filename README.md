@@ -10,7 +10,7 @@ Please cite this code and data.
 
 
 ```
-Zika, O., Appel, J., Klinge, C., Shkreli, L., Browning, M., Wiech, K. and Reinecke, A. (2023). Reduction of aversive learning rates in Pavlovian conditioning by angiotensin II antagonist losartan. PsyArXiv [https://doi.org/10.31234/osf.io/e5wdv](https://doi.org/10.31234/osf.io/e5wdv) 
+This repo is associated with the following paper: Zika, O., Appel, J., Klinge, C., Shkreli, L., Browning, M., Wiech, K. and Reinecke, A. (2023), Reduction of aversive learning rates in Pavlovian conditioning by angiotensin II antagonist losartan: a randomised clinical trial, *Biological Psychiatry*. [https://doi.org/10.1016/j.biopsych.2024.01.020](https://doi.org/10.1016/j.biopsych.2024.01.020)
 ```
 
 
